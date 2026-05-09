@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest';
-import { hexDistance, hexLabel, calcNearestHexes } from './hexUtils.js';
+import { hexDistance, hexLabel, calcNearestHexes, hexToPixel, pixelToHex } from './hexUtils.js';
 
 describe('hexLabel', () => {
   test('первая колонка', () => {
@@ -28,5 +28,23 @@ describe('hexDistance', () => {
 describe('calcNearestHexes', () => {
   test('возвращает 6 соседей', () => {
     expect(calcNearestHexes({col:3, row:3})).toHaveLength(6);
+  });
+});
+
+describe('pixelToHex (round-trip с hexToPixel)', () => {
+  test('центр гекса → тот же гекс', () => {
+    const hex = { col: 5, row: 3 };
+    const { x, y } = hexToPixel(hex.col, hex.row);
+    expect(pixelToHex(x, y)).toEqual(hex);
+  });
+  test('работает для odd-column гекса', () => {
+    const hex = { col: 7, row: 4 };
+    const { x, y } = hexToPixel(hex.col, hex.row);
+    expect(pixelToHex(x, y)).toEqual(hex);
+  });
+  test('clamp по нижней границе (отрицательные координаты)', () => {
+    const result = pixelToHex(-1000, -1000);
+    expect(result.col).toBeGreaterThanOrEqual(0);
+    expect(result.row).toBeGreaterThanOrEqual(1);
   });
 });

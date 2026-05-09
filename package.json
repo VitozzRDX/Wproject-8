@@ -21,6 +21,7 @@
   "homepage": "https://github.com/VitozzRDX/Wproject-8#readme",
   "description": "",
   "devDependencies": {
+    "@vitest/coverage-v8": "^4.1.5",
     "vitest": "^4.1.5"
   }
 }
