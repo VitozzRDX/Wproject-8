@@ -110,7 +110,26 @@ export function checkDoubleTimeCapability(id, units) {
   if (u.type !== 'squad' && u.type !== 'leader') return false;
   if (u.broken || u.pinned || u.wounded || u.exhausted) return false;
   if (u.hasStartedMoving) return false;
+  if (u.usedAssaultMovement) return false;   // AM юнит не может DoubleTime
   return true;
+}
+
+// Юнит может объявить Assault Movement
+export function checkAssaultMovementCapability(unit) {
+  if (unit.type !== 'squad' && unit.type !== 'leader') return false;
+  if (unit.broken || unit.pinned || unit.wounded || unit.exhausted) return false;
+  if (unit.hasStartedMoving) return false;
+  return true;
+}
+
+// FFNAM (First Fire Non-Assault Movement) — штрафной DRM -1 защитного огня
+// если цель двигалась без объявления Assault Movement.
+// Сломанный юнит теряет AM-статус → получает -1 даже если объявлял.
+export function calcFFNAM(unit) {
+  if (!unit.hasStartedMoving)               return 0;
+  if (unit.broken)                          return -1;
+  if (unit.usedAssaultMovement)             return 0;
+  return -1;
 }
 
 export function checkOverstack(unitIds, units) {
@@ -197,18 +216,19 @@ export function calcTotalFirepower(units, targetHex) {
 }
 
 // Вычисление огневого воздействия по IFT
-// units — стреляющие юниты, targetHex — гекс цели, tem — terrain effect modificator
+// units — стреляющие юниты, targetHex — гекс цели
+// tem — terrain effect modifier, ffnam — first fire NAM modifier
 // Возвращает [k, effect] или false (промах если индекс за пределами массива)
-export function calcFireEffect(units, targetHex, tem) {
+export function calcFireEffect(units, targetHex, tem, ffnam = 0) {
   const fp  = calcTotalFirepower(units, targetHex);
   const col = getIFTColumn(fp);
   const arr = IFT[col];
 
-  // бросок 2d6 + TEM (террейн цели делает результат хуже для стрелка)
+  // бросок 2d6 + TEM (хуже стрелку) + FFNAM (лучше стрелку, обычно отрицательный)
   const dr  = roll2d6();
-  const idx = dr + tem;
+  const idx = dr + tem + ffnam;
 
-  console.log(`[calcFireEffect] FP=${fp}, col=${col}, DR=${dr}, TEM=${tem}, idx=${idx}`);
+  console.log(`[calcFireEffect] FP=${fp}, col=${col}, DR=${dr}, TEM=${tem}, FFNAM=${ffnam}, idx=${idx}`);
 
   if (idx >= arr.length) {
     console.log(`[calcFireEffect] промах (idx ${idx} >= length ${arr.length})`);
@@ -321,8 +341,12 @@ export function calcTEM(hex) {
 // hexUnits — массив юнитов в целевом гексе которые двигались
 // Возвращает { effect, changes } где changes это таблица { unitId: state }
 export function defensiveFF(firegroupUnits, targetHex, hexUnits) {
-  const tem     = calcTEM(targetHex);
-  const effect  = calcFireEffect(firegroupUnits, targetHex, tem);
+  const tem    = calcTEM(targetHex);
+  // все юниты в стеке имеют один и тот же AM-флаг — берём первого
+  // тернарный оператор: условие ? значение_если_true : значение_если_false
+  const ffnam  = hexUnits.length > 0 ? calcFFNAM(hexUnits[0]) : 0;
+  console.log(`[defensiveFF] TEM=${tem}, FFNAM=${ffnam}, итоговый DRM=${tem + ffnam}`);
+  const effect  = calcFireEffect(firegroupUnits, targetHex, tem, ffnam);
   const changes = applyFireEffect(effect, hexUnits);
   return { effect, changes };
 }

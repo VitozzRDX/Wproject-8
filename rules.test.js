@@ -5,6 +5,7 @@ import {
   checkOverstack, calcLeadBonus, getIFTColumn, lookupIFT,
   calcFirepower, calcTotalFirepower, calcFireEffect, applyFireEffect,
   calcTEM, defensiveFF, getLeaderBonusRecipients,
+  calcFFNAM, checkAssaultMovementCapability,
 } from './rules.js';
 
 // Хелпер: задать последовательность бросков Math.random
@@ -181,6 +182,9 @@ describe('checkDoubleTimeCapability', () => {
   });
   test('уже начал движение — не может', () => {
     expect(checkDoubleTimeCapability('a', { a: { ...baseInf, hasStartedMoving: true } })).toBe(false);
+  });
+  test('AM юнит не может Double Time', () => {
+    expect(checkDoubleTimeCapability('a', { a: { ...baseInf, usedAssaultMovement: true } })).toBe(false);
   });
 });
 
@@ -429,6 +433,57 @@ describe('getLeaderBonusRecipients', () => {
 });
 
 // ────────────────────────────────────────────────────────────────────
+// calcFFNAM
+// ────────────────────────────────────────────────────────────────────
+describe('calcFFNAM', () => {
+  test('-1 если двигался и не объявлял Assault Movement', () => {
+    const unit = { hasStartedMoving: true, usedAssaultMovement: false };
+    expect(calcFFNAM(unit)).toBe(-1);
+  });
+
+  test('0 если объявлял Assault Movement', () => {
+    const unit = { hasStartedMoving: true, usedAssaultMovement: true };
+    expect(calcFFNAM(unit)).toBe(0);
+  });
+
+  test('0 если не двигался', () => {
+    const unit = { hasStartedMoving: false, usedAssaultMovement: false };
+    expect(calcFFNAM(unit)).toBe(0);
+  });
+
+  test('0 если не двигался даже при флаге AM', () => {
+    const unit = { hasStartedMoving: false, usedAssaultMovement: true };
+    expect(calcFFNAM(unit)).toBe(0);
+  });
+
+  test('-1 если сломан, даже если был AM (правило: broken → AM теряется)', () => {
+    const unit = { hasStartedMoving: true, usedAssaultMovement: true, broken: true };
+    expect(calcFFNAM(unit)).toBe(-1);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────
+// checkAssaultMovementCapability
+// ────────────────────────────────────────────────────────────────────
+describe('checkAssaultMovementCapability', () => {
+  const baseInf = { type:'squad', broken:false, pinned:false, wounded:false, exhausted:false,
+                    hasStartedMoving:false };
+
+  test('здоровая пехота — может', () => {
+    expect(checkAssaultMovementCapability({ ...baseInf })).toBe(true);
+  });
+  test('лидер тоже может', () => {
+    expect(checkAssaultMovementCapability({ ...baseInf, type:'leader' })).toBe(true);
+  });
+  test('сломанный — не может', () => {
+    expect(checkAssaultMovementCapability({ ...baseInf, broken:true })).toBe(false);
+  });
+  test('уже двигался — не может', () => {
+    expect(checkAssaultMovementCapability({ ...baseInf, hasStartedMoving:true })).toBe(false);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────
 // defensiveFF (интеграционный)
 // ────────────────────────────────────────────────────────────────────
 describe('defensiveFF', () => {
@@ -440,5 +495,27 @@ describe('defensiveFF', () => {
     const res = defensiveFF(fg, target, hexUnits);
     expect(res).toHaveProperty('effect');
     expect(res).toHaveProperty('changes');
+  });
+
+  test('FFNAM применяется: moved no-AM юнит получает -1 к idx', () => {
+    mockRandom([0, 0]);  // dr=2
+    const fg = [{ firepower: 4, range: 6, hex: { col: 0, row: 1 } }];
+    const target = { col: 0, row: 2 };  // open ground, TEM=0
+    const movedUnit = { id: 'a', morale: 7, hasStartedMoving: true, usedAssaultMovement: false };
+
+    const { effect } = defensiveFF(fg, target, [movedUnit]);
+    // PB → fp=8, col=8, dr=2, tem=0, ffnam=-1 → idx=1, IFT[8][1] = [2,'KIA']
+    expect(effect).toEqual([2, 'KIA']);
+  });
+
+  test('FFNAM не применяется: AM юнит — idx без -1', () => {
+    mockRandom([0, 0]);  // dr=2
+    const fg = [{ firepower: 4, range: 6, hex: { col: 0, row: 1 } }];
+    const target = { col: 0, row: 2 };
+    const amUnit = { id: 'a', morale: 7, hasStartedMoving: true, usedAssaultMovement: true };
+
+    const { effect } = defensiveFF(fg, target, [amUnit]);
+    // dr=2, tem=0, ffnam=0 → idx=2, IFT[8][2] = [1,'KIA']
+    expect(effect).toEqual([1, 'KIA']);
   });
 });

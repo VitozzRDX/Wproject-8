@@ -14,11 +14,13 @@ const handlers = {
     State.setUnit(unitId, 'selected', true);
     State.selected.push(unitId);
     refreshDoubleTimeButton();
+    refreshAssaultMovementButton();
   },
   ADD_TO_SELECTION({ unitId }) {
     State.setUnit(unitId, 'selected', true);
     State.selected.push(unitId);            // добавляем к уже выбранным
     refreshDoubleTimeButton();
+    refreshAssaultMovementButton();
   },
   SELECT_DEFENDER({ unitId }) {
     // не чистим selected — атакеры остаются выбранными
@@ -52,6 +54,7 @@ const handlers = {
     State.selected.forEach(id => State.setUnit(id, 'selected', false));
     State.selected = [];
     RendererUI.removeButton('DoubleTime');
+    RendererUI.removeButton('AssaultMovement');
   },
   MOVE_TO     (cmd)        {
     // все выбранные уже отходили — двигаться нельзя
@@ -125,6 +128,18 @@ function moveSelectedToHex(targetHex) {
 
   oldHexes.forEach(recalculateHex);
   recalculateHex(targetHex);
+}
+
+// Перерисовать кнопку AssaultMovement — показать если выбранные на активной стороне и все способны
+function refreshAssaultMovementButton() {
+  RendererUI.removeButton('AssaultMovement');
+  if (State.selected.length === 0) return;
+  const selSide = State.units[State.selected[0]].nation;
+  if (selSide !== PhaseManager.getActiveSide()) return;
+  const allCapable = State.selected.every(id => Rules.checkAssaultMovementCapability(State.units[id]));
+  if (allCapable) {
+    RendererUI.drawButton({ x: 10, y: 140, label: 'AssaultMovement', onSignal: Engine.onSignal });
+  }
 }
 
 // Перерисовать кнопку DoubleTime — показать только если выбранные на активной стороне и все способны
@@ -282,6 +297,20 @@ function handleMovement({ pos }, overrideTerrain = null) {
   const allOnBonus = State.selected.every(id => State.units[id].roadBonusGranted);
   if (allOnBonus && !Rules.isRoadHex(hex)) return;
 
+  // AM-юнит уже сделал свой 1 мув — больше двигаться нельзя (но может тратить MF на другое)
+  const allAMDone = State.selected.every(id => {
+    const u = State.units[id];
+    return u.usedAssaultMovement && u.path.length >= 1;
+  });
+  if (allAMDone) return;
+
+  // AM-юнит не должен потратить весь MF одним мувом
+  const wouldTakeAll = State.selected.some(id => {
+    const u = State.units[id];
+    return u.usedAssaultMovement && (u.mf - cost <= 0);
+  });
+  if (wouldTakeAll) return;
+
   // road-статус целевого гекса (учитывая выбор UseRoad/UseWoods)
   const targetIsRoad = overrideTerrain
     ? (overrideTerrain === 'dirtRoad' || overrideTerrain === 'pavedRoad')
@@ -302,8 +331,9 @@ function handleMovement({ pos }, overrideTerrain = null) {
 
   spendMovement(cost, hex, targetIsRoad);
 
-  // обновить кнопку DoubleTime — после движения она уже недоступна
+  // обновить кнопки — после движения они уже недоступны
   refreshDoubleTimeButton();
+  refreshAssaultMovementButton();
 
   moveSelectedToHex(hex);
 }
@@ -336,6 +366,11 @@ export const Engine = {
           State.units[id].usedDoubleTime = true;
         });
         RendererUI.removeButton('DoubleTime');
+        break;
+      case 'AssaultMovement':
+        State.selected.forEach(id => { State.units[id].usedAssaultMovement = true; });
+        RendererUI.removeButton('AssaultMovement');
+        RendererUI.removeButton('DoubleTime');     // взаимоисключающие
         break;
       case 'UseWoods':
         State.selected.forEach(id => { State.units[id].usedWoodsRoad = true; });

@@ -8,6 +8,7 @@ const Unit             = { state: 'ready' };
 const Infantry         = { ...Unit,     movementAvailability: true, possession: false,
                                        broken: false, pinned: false, wounded: false, exhausted: false,
                                        hasStartedMoving: false, usedDoubleTime: false,
+                                       usedAssaultMovement: false,
                                        path: [], roadBonusGranted: false, usedWoodsRoad: false };
 const Squad            = { ...Infantry, type: 'squad', mf: 4 };
 const Leader           = { ...Infantry, type: 'leader', mf: 6, quality: 'Elite' };
