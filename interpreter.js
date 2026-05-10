@@ -3,7 +3,7 @@ import { State } from './state.js';
 import { PhaseManager } from './phaseManager.js';
 
 // Таблица правил: первое совпавшее правило — победитель
-const RULES = [
+export const RULES = [
   {
     // правый клик по гексу куда зашли двинувшиеся юниты — Defensive First Fire
     // (Engine сам определит гекс по координатам и проверит попал ли клик)

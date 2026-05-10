@@ -204,9 +204,9 @@ export function calcFireEffect(units, targetHex, tem) {
   const col = getIFTColumn(fp);
   const arr = IFT[col];
 
-  // бросок 2d6
+  // бросок 2d6 + TEM (террейн цели делает результат хуже для стрелка)
   const dr  = roll2d6();
-  const idx = dr;
+  const idx = dr + tem;
 
   console.log(`[calcFireEffect] FP=${fp}, col=${col}, DR=${dr}, TEM=${tem}, idx=${idx}`);
 
@@ -220,12 +220,18 @@ export function calcFireEffect(units, targetHex, tem) {
 
 // Бросок 2d6
 function roll2d6() {
-  return (Math.floor(Math.random() * 6) + 1) + (Math.floor(Math.random() * 6) + 1);
+  console.log(`бросаем 2d6... (DR)`);  
+  let result = (Math.floor(Math.random() * 6) + 1) + (Math.floor(Math.random() * 6) + 1);;
+  console.log(`результат броска 2d6: ${result}`); 
+  return result;  
 }
 
 // Бросок d6
 function rollD6() {
-  return Math.floor(Math.random() * 6) + 1;
+  console.log(`бросаем d6...(dr)`);
+  let result = Math.floor(Math.random() * 6) + 1;
+  console.log(`результат броска d6: ${result}`);
+  return result;
 }
 
 // Применяет эффект огня к юнитам в целевом гексе

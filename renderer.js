@@ -27,6 +27,7 @@ export function initRenderer() {
       const image = node.findOne('Image');
       image.stroke(value ? 'red' : null);    // обводка при выборе
       image.strokeWidth(value ? 1 : 0);
+      if (value) node.moveToTop();            // поднимаем наверх z-порядка
     }
 
     if (key === 'pos') {

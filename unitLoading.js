@@ -16,6 +16,7 @@ const MG               = { ...SW,       type: 'mg' };
 
 const GermanSquad_1st  = { ...Squad,  nation: 'german', quality: '1stLine', selfRally: true  };
 const SovietSquad_1st  = { ...Squad,  nation: 'soviet', quality: '1stLine', selfRally: false };
+const SovietSquad_Elite= { ...Squad,  nation: 'soviet', quality: 'Elite',   selfRally: true  };
 const GermanSquad_Grn  = { ...Squad,  nation: 'german', quality: 'Green',   selfRally: false, mf: 3 };
 const GermanLeader     = { ...Leader, nation: 'german' };
 const SovietLeader     = { ...Leader, nation: 'soviet' };
@@ -30,6 +31,7 @@ const TEMPLATES = {
   'ge_L91': { ...GermanLeader,    morale: 9, leadershipModifier: -1, selfRally: true,  src: './graf/geL91.gif',  brokenSrc: './graf/geL91b.gif' },
   'so_L61': { ...SovietLeader,    morale: 6, leadershipModifier: +1, selfRally: false, src: './graf/ruL61.gif'  },
   'so_237': { ...SovietSquad_1st, firepower: 2, range: 3, morale: 7, src: './graf/ru237H.gif' },
+  'so_628': { ...SovietSquad_Elite, firepower: 6, range: 2, morale: 8, src: './graf/ru628S.gif' },
   'so_hmg': { ...SovietMG,        firepower: 8, range: 16, rateOfFire: 3, breakNumber: 11, src: './graf/soHMG.gif' },
 };
 
@@ -47,6 +49,9 @@ const scenario = [
   { templateId: 'ge_467', id: 'unit_08', hex: { col: 5, row: 2 } },
   { templateId: 'ge_L91', id: 'unit_09', hex: { col: 3, row: 4 } },
   { templateId: 'so_237', id: 'unit_10', hex: { col: 5, row: 6 } },
+  { templateId: 'so_628', id: 'unit_11', hex: { col: 5, row: 6 } },
+  { templateId: 'so_628', id: 'unit_12', hex: { col: 5, row: 5 } },
+  { templateId: 'so_628', id: 'unit_13', hex: { col: 6, row: 8 } },
 ];
 
 // ---------------------------------------------------------------------------
