@@ -5,7 +5,8 @@ import {
   checkOverstack, calcLeadBonus, getIFTColumn, lookupIFT,
   calcFirepower, calcTotalFirepower, calcFireEffect, applyFireEffect,
   calcTEM, defensiveFF, getLeaderBonusRecipients,
-  calcFFNAM, checkAssaultMovementCapability,
+  calcFFNAM, checkAssaultMovementCapability, calcFFMO,
+  calcElevation, calcHeightAdvantage,
 } from './rules.js';
 
 // Хелпер: задать последовательность бросков Math.random
@@ -463,6 +464,78 @@ describe('calcFFNAM', () => {
 });
 
 // ────────────────────────────────────────────────────────────────────
+// calcElevation / calcHeightAdvantage
+// ────────────────────────────────────────────────────────────────────
+describe('calcElevation', () => {
+  test('0 на равнине', () => {
+    expect(calcElevation({ col: 100, row: 100 })).toBe(0);
+  });
+  test('1 на hill (J4)', () => {
+    expect(calcElevation({ col: 9, row: 4 })).toBe(1);
+  });
+  test('1 на crestLine (G4)', () => {
+    expect(calcElevation({ col: 6, row: 4 })).toBe(1);
+  });
+});
+
+describe('calcHeightAdvantage', () => {
+  test('+1 если стрелок ниже цели, цель не имеет TEM', () => {
+    const shooters = [{ hex: { col: 100, row: 100 } }];  // elev 0
+    const target = { col: 9, row: 4 };                   // J4, hill, elev 1, TEM=0
+    expect(calcHeightAdvantage(shooters, target)).toBe(1);
+  });
+
+  test('0 если все стрелки на той же высоте', () => {
+    const shooters = [{ hex: { col: 6, row: 4 } }];      // crestLine, elev 1
+    const target = { col: 9, row: 4 };                   // hill, elev 1
+    expect(calcHeightAdvantage(shooters, target)).toBe(0);
+  });
+
+  test('+1 если хотя бы один стрелок ниже', () => {
+    const shooters = [
+      { hex: { col: 6, row: 4 } },                       // elev 1
+      { hex: { col: 100, row: 100 } },                   // elev 0 — этот ниже
+    ];
+    const target = { col: 9, row: 4 };                   // elev 1
+    expect(calcHeightAdvantage(shooters, target)).toBe(1);
+  });
+
+  test('0 если цель уже имеет positive TEM', () => {
+    const shooters = [{ hex: { col: 100, row: 100 } }];
+    // нужен гекс который и hill и forest — нет такого, возьмём орчард+hill (AC3)
+    // orchard=0, hill=0 → max=0. Возьмём гекс с forest для теста
+    const target = { col: 0, row: 4 };                   // forest, TEM=1
+    expect(calcHeightAdvantage(shooters, target)).toBe(0);
+  });
+
+  test('0 если стрелков нет', () => {
+    expect(calcHeightAdvantage([], { col: 9, row: 4 })).toBe(0);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────
+// calcFFMO
+// ────────────────────────────────────────────────────────────────────
+describe('calcFFMO', () => {
+  test('-1 если двигался в open ground (TEM=0)', () => {
+    const unit = { hasStartedMoving: true };
+    const openHex = { col: 100, row: 100 };
+    expect(calcFFMO(unit, openHex)).toBe(-1);
+  });
+
+  test('0 если двигался в укрытие (forest, TEM>0)', () => {
+    const unit = { hasStartedMoving: true };
+    const forestHex = { col: 0, row: 4 };  // forest
+    expect(calcFFMO(unit, forestHex)).toBe(0);
+  });
+
+  test('0 если не двигался (даже на open ground)', () => {
+    const unit = { hasStartedMoving: false };
+    expect(calcFFMO(unit, { col: 100, row: 100 })).toBe(0);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────
 // checkAssaultMovementCapability
 // ────────────────────────────────────────────────────────────────────
 describe('checkAssaultMovementCapability', () => {
@@ -497,25 +570,36 @@ describe('defensiveFF', () => {
     expect(res).toHaveProperty('changes');
   });
 
-  test('FFNAM применяется: moved no-AM юнит получает -1 к idx', () => {
+  test('FFNAM + FFMO применяются: moved no-AM юнит в open ground → -2', () => {
     mockRandom([0, 0]);  // dr=2
     const fg = [{ firepower: 4, range: 6, hex: { col: 0, row: 1 } }];
     const target = { col: 0, row: 2 };  // open ground, TEM=0
     const movedUnit = { id: 'a', morale: 7, hasStartedMoving: true, usedAssaultMovement: false };
 
     const { effect } = defensiveFF(fg, target, [movedUnit]);
-    // PB → fp=8, col=8, dr=2, tem=0, ffnam=-1 → idx=1, IFT[8][1] = [2,'KIA']
-    expect(effect).toEqual([2, 'KIA']);
+    // PB → fp=8, dr=2, tem=0, ffnam=-1, ffmo=-1 → idx=0, IFT[8][0]=[3,'KIA']
+    expect(effect).toEqual([3, 'KIA']);
   });
 
-  test('FFNAM не применяется: AM юнит — idx без -1', () => {
+  test('FFNAM не применяется но FFMO да: AM юнит в open ground → -1', () => {
     mockRandom([0, 0]);  // dr=2
     const fg = [{ firepower: 4, range: 6, hex: { col: 0, row: 1 } }];
     const target = { col: 0, row: 2 };
     const amUnit = { id: 'a', morale: 7, hasStartedMoving: true, usedAssaultMovement: true };
 
     const { effect } = defensiveFF(fg, target, [amUnit]);
-    // dr=2, tem=0, ffnam=0 → idx=2, IFT[8][2] = [1,'KIA']
-    expect(effect).toEqual([1, 'KIA']);
+    // dr=2, tem=0, ffnam=0, ffmo=-1 → idx=1, IFT[8][1] = [2,'KIA']
+    expect(effect).toEqual([2, 'KIA']);
+  });
+
+  test('FFMO + FFNAM суммируются: moved no-AM в open ground → -2', () => {
+    mockRandom([0, 0]);  // dr=2
+    const fg = [{ firepower: 4, range: 6, hex: { col: 0, row: 1 } }];
+    const target = { col: 0, row: 2 };  // open ground (TEM=0)
+    const movedUnit = { id: 'a', morale: 7, hasStartedMoving: true, usedAssaultMovement: false };
+
+    const { effect } = defensiveFF(fg, target, [movedUnit]);
+    // PB fp=8, dr=2, tem=0, ffnam=-1, ffmo=-1 → idx=0, IFT[8][0]=[3,'KIA']
+    expect(effect).toEqual([3, 'KIA']);
   });
 });

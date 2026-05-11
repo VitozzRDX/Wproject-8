@@ -132,6 +132,15 @@ export function calcFFNAM(unit) {
   return -1;
 }
 
+// FFMO (First Fire Movement in Open Ground) — штрафной DRM -1
+// если цель двигалась И находится на открытой местности (без TEM).
+// Кумулятивен с FFNAM.
+export function calcFFMO(unit, hex) {
+  if (!unit.hasStartedMoving) return 0;
+  if (calcTEM(hex) > 0)       return 0;
+  return -1;
+}
+
 export function checkOverstack(unitIds, units) {
   let squadCount  = 0;
   let leaderCount = 0;
@@ -216,19 +225,18 @@ export function calcTotalFirepower(units, targetHex) {
 }
 
 // Вычисление огневого воздействия по IFT
-// units — стреляющие юниты, targetHex — гекс цели
-// tem — terrain effect modifier, ffnam — first fire NAM modifier
-// Возвращает [k, effect] или false (промах если индекс за пределами массива)
-export function calcFireEffect(units, targetHex, tem, ffnam = 0) {
+// tem — TEM, ffnam — FFNAM, ffmo — FFMO
+// Возвращает [k, effect] или false (промах)
+export function calcFireEffect(units, targetHex, tem, ffnam = 0, ffmo = 0) {
   const fp  = calcTotalFirepower(units, targetHex);
   const col = getIFTColumn(fp);
   const arr = IFT[col];
 
-  // бросок 2d6 + TEM (хуже стрелку) + FFNAM (лучше стрелку, обычно отрицательный)
+  // бросок 2d6 + TEM (хуже стрелку) + FFNAM/FFMO (лучше стрелку, отрицательные)
   const dr  = roll2d6();
-  const idx = dr + tem + ffnam;
+  const idx = dr + tem + ffnam + ffmo;
 
-  console.log(`[calcFireEffect] FP=${fp}, col=${col}, DR=${dr}, TEM=${tem}, FFNAM=${ffnam}, idx=${idx}`);
+  console.log(`[calcFireEffect] FP=${fp}, col=${col}, DR=${dr}, TEM=${tem}, FFNAM=${ffnam}, FFMO=${ffmo}, idx=${idx}`);
 
   if (idx >= arr.length) {
     console.log(`[calcFireEffect] промах (idx ${idx} >= length ${arr.length})`);
@@ -268,20 +276,26 @@ export function applyFireEffect(effect, targets) {
   switch (type) {
     case 'MC': {
       // [0,'MC']=NMC, [k,'MC']=MC с модификатором +k
+      // k — это число из ячейки IFT, например [2, 'MC'] → k=2
       targets.forEach(u => {
-        const dr = roll2d6() + k;
-        console.log(`[MC] ${u.id}: DR+k=${dr}, morale=${u.morale} → ${dr > u.morale ? 'broken' : 'ok'}`);
-        if (dr > u.morale) result[u.id] = 'broken';
+        const baseDr = roll2d6();
+        const finalDr = baseDr + k;
+        const where = u.hex ? hexLabel(u.hex.col, u.hex.row) : '?';
+        const desc  = `${u.id} (${u.nation} ${u.type} в ${where})`;
+        console.log(`[MC] ${desc}: DR=${baseDr}, IFT-mod(k)=${k}, итог=${finalDr}, morale=${u.morale} → ${finalDr > u.morale ? 'broken' : 'ok'}`);
+        if (finalDr > u.morale) result[u.id] = 'broken';
       });
       break;
     }
 
     case 'PTC': {
-      // Pin Task Check — каждый небрейкнутый/нензапиненный юнит проверяет мораль
+      // Pin Task Check — каждый небрейкнутый/незапиненный юнит проверяет мораль
       targets.forEach(u => {
         if (u.broken || u.pinned) return;
         const dr = roll2d6();
-        console.log(`[PTC] ${u.id}: DR=${dr}, morale=${u.morale} → ${dr > u.morale ? 'pinned' : 'ok'}`);
+        const where = u.hex ? hexLabel(u.hex.col, u.hex.row) : '?';
+        const desc  = `${u.id} (${u.nation} ${u.type} в ${where})`;
+        console.log(`[PTC] ${desc}: DR=${dr}, morale=${u.morale} → ${dr > u.morale ? 'pinned' : 'ok'}`);
         if (dr > u.morale) result[u.id] = 'pinned';
       });
       break;
@@ -318,15 +332,36 @@ export function applyFireEffect(effect, targets) {
       }
 
       others.forEach(u => {
-        const dr = roll2d6() + k;
-        console.log(`[K/ MC+${k}] ${u.id}: DR=${dr}, morale=${u.morale} → ${dr > u.morale ? 'broken' : 'ok'}`);
-        if (dr > u.morale) result[u.id] = 'broken';
+        const baseDr  = roll2d6();
+        const finalDr = baseDr + k;
+        const where   = u.hex ? hexLabel(u.hex.col, u.hex.row) : '?';
+        const desc    = `${u.id} (${u.nation} ${u.type} в ${where})`;
+        console.log(`[K/ MC] ${desc}: DR=${baseDr}, IFT-mod(k)=${k}, итог=${finalDr}, morale=${u.morale} → ${finalDr > u.morale ? 'broken' : 'ok'}`);
+        if (finalDr > u.morale) result[u.id] = 'broken';
       });
       break;
     }
   }
 
   return result;
+}
+
+// Уровень высоты гекса (0 — равнина, 1 — hill или crestLine)
+export function calcElevation(hex) {
+  const terrain = hexMap[hexLabel(hex.col, hex.row)] || [];
+  if (terrain.includes('hill') || terrain.includes('crestLine')) return 1;
+  return 0;
+}
+
+// Height Advantage: +1 TEM если хотя бы один стрелок ниже цели,
+// и цель не защищена другим положительным TEM
+export function calcHeightAdvantage(shooters, targetHex) {
+  const targetElev     = calcElevation(targetHex);
+  if (shooters.length === 0) return 0;
+  const minShooterElev = Math.min(...shooters.map(u => calcElevation(u.hex)));
+  if (minShooterElev >= targetElev) return 0;
+  if (calcTEM(targetHex) > 0)       return 0;
+  return 1;
 }
 
 // TEM целевого гекса (максимум по всем террейнам)
@@ -341,12 +376,17 @@ export function calcTEM(hex) {
 // hexUnits — массив юнитов в целевом гексе которые двигались
 // Возвращает { effect, changes } где changes это таблица { unitId: state }
 export function defensiveFF(firegroupUnits, targetHex, hexUnits) {
-  const tem    = calcTEM(targetHex);
+  const baseTem = calcTEM(targetHex);
+  const ha      = calcHeightAdvantage(firegroupUnits, targetHex);
+  const tem     = baseTem + ha;
   // все юниты в стеке имеют один и тот же AM-флаг — берём первого
   // тернарный оператор: условие ? значение_если_true : значение_если_false
-  const ffnam  = hexUnits.length > 0 ? calcFFNAM(hexUnits[0]) : 0;
-  console.log(`[defensiveFF] TEM=${tem}, FFNAM=${ffnam}, итоговый DRM=${tem + ffnam}`);
-  const effect  = calcFireEffect(firegroupUnits, targetHex, tem, ffnam);
+  const ffnam   = hexUnits.length > 0 ? calcFFNAM(hexUnits[0]) : 0;
+  const ffmoRaw = hexUnits.length > 0 ? calcFFMO(hexUnits[0], targetHex) : 0;
+  // Height Advantage подавляет FFMO
+  const ffmo    = ha > 0 ? 0 : ffmoRaw;
+  console.log(`[defensiveFF] TEM=${baseTem}+HA=${ha}=${tem}, FFNAM=${ffnam}, FFMO=${ffmo}, итоговый DRM=${tem + ffnam + ffmo}`);
+  const effect  = calcFireEffect(firegroupUnits, targetHex, tem, ffnam, ffmo);
   const changes = applyFireEffect(effect, hexUnits);
   return { effect, changes };
 }
