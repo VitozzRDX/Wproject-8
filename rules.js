@@ -1,4 +1,4 @@
-import { calcNearestHexes, hexLabel, hexDistance } from './hexUtils.js';
+import { calcNearestHexes, hexLabel, hexDistance, hexToPixel, pixelToHex } from './hexUtils.js';
 import { hexMap } from './hexmap.js';
 
 // Terrain Effect Modifier — модификатор броска при стрельбе по цели в этом террейне
@@ -225,18 +225,18 @@ export function calcTotalFirepower(units, targetHex) {
 }
 
 // Вычисление огневого воздействия по IFT
-// tem — TEM, ffnam — FFNAM, ffmo — FFMO
+// drm — суммарный DRM (TEM + Hindrance + FFNAM + FFMO + любые другие модификаторы)
 // Возвращает [k, effect] или false (промах)
-export function calcFireEffect(units, targetHex, tem, ffnam = 0, ffmo = 0) {
+export function calcFireEffect(units, targetHex, drm = 0) {
   const fp  = calcTotalFirepower(units, targetHex);
   const col = getIFTColumn(fp);
   const arr = IFT[col];
 
-  // бросок 2d6 + TEM (хуже стрелку) + FFNAM/FFMO (лучше стрелку, отрицательные)
+  // бросок 2d6 + DRM
   const dr  = roll2d6();
-  const idx = dr + tem + ffnam + ffmo;
+  const idx = dr + drm;
 
-  console.log(`[calcFireEffect] FP=${fp}, col=${col}, DR=${dr}, TEM=${tem}, FFNAM=${ffnam}, FFMO=${ffmo}, idx=${idx}`);
+  console.log(`[calcFireEffect] FP=${fp}, col=${col}, DR=${dr}, DRM=${drm}, idx=${idx}`);
 
   if (idx >= arr.length) {
     console.log(`[calcFireEffect] промах (idx ${idx} >= length ${arr.length})`);
@@ -346,6 +346,88 @@ export function applyFireEffect(effect, targets) {
   return result;
 }
 
+// Гексы которые считаются Hindrance (мешают, но не блокируют LOS)
+const HINDRANCE_TERRAINS = ['orchard', 'grain', 'brush'];
+
+// Возвращает массив промежуточных гексов на линии от центра одного гекса
+// до центра другого (без самих fromHex и toHex).
+// Для случая "линия по hexside" возвращает оба соседних гекса
+// благодаря микро-смещениям ±epsilon.
+export function getHexToHexArray(fromHex, toHex) {
+  // пиксельные координаты центров
+  const start = hexToPixel(fromHex.col, fromHex.row);
+  const end   = hexToPixel(toHex.col, toHex.row);
+
+  // Set для накопления уникальных гексов (ключ — строка "col-row")
+  const steps  = 50;
+  const hexSet = new Set();
+
+  for (let i = 0; i <= steps; i++) {
+    // линейная интерполяция вдоль линии
+    const t = i / steps;
+    const x = start.x + (end.x - start.x) * t;
+    const y = start.y + (end.y - start.y) * t;
+
+    // основная точка + микро-сдвиги вверх/вниз — ловим оба соседних
+    // гекса когда линия идёт строго по hexside
+    const epsilon = 0.5;
+    [
+      pixelToHex(x, y),
+      pixelToHex(x, y + epsilon),
+      pixelToHex(x, y - epsilon),
+    ].forEach(h => hexSet.add(`${h.col}-${h.row}`));
+  }
+
+  // исключаем гекс стрелка и гекс цели — они не считаются промежуточными
+  hexSet.delete(`${fromHex.col}-${fromHex.row}`);
+  hexSet.delete(`${toHex.col}-${toHex.row}`);
+
+  // возвращаем массив объектов {col, row}
+  return [...hexSet].map(key => {
+    const [col, row] = key.split('-').map(Number);
+    return { col, row };
+  });
+}
+
+// Если все гексы пути (включая стрелка и цель) содержат road —
+// это tree-lined road, hindrance подавляется.
+function isTreeLinedRoad(fromHex, toHex, intermediate) {
+  const hasRoad = h => {
+    const terrain = hexMap[hexLabel(h.col, h.row)] || [];
+    return terrain.includes('dirtRoad') || terrain.includes('pavedRoad');
+  };
+  return [fromHex, toHex, ...intermediate].every(hasRoad);
+}
+
+// Суммарный Hindrance DRM для огня группы по цели.
+// Для каждого стрелка считаем свой путь и его hindrance.
+// Берём максимум (худший для стрелков) — отражает сложность для группы.
+export function checkHindrance(shooters, targetHex) {
+  if (shooters.length === 0) return 0;
+  return Math.max(...shooters.map(shooter => {
+    const intermediate = getHexToHexArray(shooter.hex, targetHex);
+
+    // tree-lined road exception — все гексы пути имеют road
+    if (isTreeLinedRoad(shooter.hex, targetHex, intermediate)) return 0;
+
+    let total = 0;
+    for (const h of intermediate) {
+      const terrain = hexMap[hexLabel(h.col, h.row)] || [];
+      for (const t of terrain) {
+        if (HINDRANCE_TERRAINS.includes(t)) total += 1;
+      }
+    }
+    return total;
+  }));
+}
+
+// Проверка LOS (Line of Sight). Сейчас геометрических препятствий нет,
+// поэтому LOS существует всегда, кроме случая когда суммарный hindrance >= 6
+// (комбинация препятствий полностью блокирует видимость).
+export function checkLOS(shooters, targetHex) {
+  return checkHindrance(shooters, targetHex) < 6;
+}
+
 // Уровень высоты гекса (0 — равнина, 1 — hill или crestLine)
 export function calcElevation(hex) {
   const terrain = hexMap[hexLabel(hex.col, hex.row)] || [];
@@ -376,17 +458,35 @@ export function calcTEM(hex) {
 // hexUnits — массив юнитов в целевом гексе которые двигались
 // Возвращает { effect, changes } где changes это таблица { unitId: state }
 export function defensiveFF(firegroupUnits, targetHex, hexUnits) {
-  const baseTem = calcTEM(targetHex);
-  const ha      = calcHeightAdvantage(firegroupUnits, targetHex);
-  const tem     = baseTem + ha;
+  // проверка линии огня
+  const los = checkLOS(firegroupUnits, targetHex);
+  console.log(`[defensiveFF] LOS=${los}`);
+  if (!los) {
+    console.log('[defensiveFF] нет LOS — огонь невозможен');
+    return { effect: false, changes: {} };
+  }
+
+  // TEM и HA взаимоисключающие — берём один или другой
+  const baseTem   = calcTEM(targetHex);
+  const ha        = calcHeightAdvantage(firegroupUnits, targetHex);
+  const tem       = baseTem > 0 ? baseTem : ha;
+
+  // отдельный счёт hindrance
+  const hindrance = checkHindrance(firegroupUnits, targetHex);
+
   // все юниты в стеке имеют один и тот же AM-флаг — берём первого
   // тернарный оператор: условие ? значение_если_true : значение_если_false
-  const ffnam   = hexUnits.length > 0 ? calcFFNAM(hexUnits[0]) : 0;
-  const ffmoRaw = hexUnits.length > 0 ? calcFFMO(hexUnits[0], targetHex) : 0;
-  // Height Advantage подавляет FFMO
-  const ffmo    = ha > 0 ? 0 : ffmoRaw;
-  console.log(`[defensiveFF] TEM=${baseTem}+HA=${ha}=${tem}, FFNAM=${ffnam}, FFMO=${ffmo}, итоговый DRM=${tem + ffnam + ffmo}`);
-  const effect  = calcFireEffect(firegroupUnits, targetHex, tem, ffnam, ffmo);
+  const ffnam     = hexUnits.length > 0 ? calcFFNAM(hexUnits[0]) : 0;
+  const ffmoRaw   = hexUnits.length > 0 ? calcFFMO(hexUnits[0], targetHex) : 0;
+  // HA или hindrance подавляют FFMO
+  const ffmo      = (ha > 0 || hindrance > 0) ? 0 : ffmoRaw;
+
+  // итоговый DRM — сумма всех компонент
+  const totalDRM  = tem + hindrance + ffnam + ffmo;
+
+  console.log(`[defensiveFF] TEM=${tem}, HINDRANCE=${hindrance}, FFNAM=${ffnam}, FFMO=${ffmo}, totalDRM=${totalDRM}`);
+
+  const effect  = calcFireEffect(firegroupUnits, targetHex, totalDRM);
   const changes = applyFireEffect(effect, hexUnits);
   return { effect, changes };
 }

@@ -7,6 +7,7 @@ import {
   calcTEM, defensiveFF, getLeaderBonusRecipients,
   calcFFNAM, checkAssaultMovementCapability, calcFFMO,
   calcElevation, calcHeightAdvantage,
+  getHexToHexArray, checkHindrance, checkLOS,
 } from './rules.js';
 
 // Хелпер: задать последовательность бросков Math.random
@@ -553,6 +554,51 @@ describe('checkAssaultMovementCapability', () => {
   });
   test('уже двигался — не может', () => {
     expect(checkAssaultMovementCapability({ ...baseInf, hasStartedMoving:true })).toBe(false);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────
+// checkHindrance / checkLOS / tree-lined road
+// ────────────────────────────────────────────────────────────────────
+describe('checkHindrance', () => {
+  test('D4 → F4: +1 hindrance за orchard в E4 (промежуточный)', () => {
+    const shooter = { hex: { col: 3, row: 4 } };       // D4: road+orchard
+    const target  = { col: 5, row: 4 };                 // F4: пусто
+    expect(checkHindrance([shooter], target)).toBeGreaterThan(0);
+  });
+
+  test('tree-lined road: D4 → C5 (оба road) → hindrance 0', () => {
+    const shooter = { hex: { col: 3, row: 4 } };       // D4: road+orchard
+    const target  = { col: 2, row: 5 };                 // C5: road
+    expect(checkHindrance([shooter], target)).toBe(0);
+  });
+
+  test('пустые гексы без orchard → hindrance 0', () => {
+    const shooter = { hex: { col: 50, row: 50 } };
+    const target  = { col: 52, row: 50 };
+    expect(checkHindrance([shooter], target)).toBe(0);
+  });
+
+  test('нет стрелков → 0', () => {
+    expect(checkHindrance([], { col: 1, row: 1 })).toBe(0);
+  });
+
+  test('max по нескольким стрелкам (худший)', () => {
+    const shooters = [
+      { hex: { col: 3, row: 4 } },    // D4 → F4: hindrance > 0
+      { hex: { col: 50, row: 50 } },  // далеко → 0
+    ];
+    expect(checkHindrance(shooters, { col: 5, row: 4 })).toBeGreaterThan(0);
+  });
+});
+
+describe('checkLOS', () => {
+  test('пустое поле — LOS есть', () => {
+    expect(checkLOS([{ hex: { col: 50, row: 50 } }], { col: 52, row: 50 })).toBe(true);
+  });
+
+  test('hindrance < 6 — LOS есть', () => {
+    expect(checkLOS([{ hex: { col: 3, row: 4 } }], { col: 5, row: 4 })).toBe(true);
   });
 });
 
